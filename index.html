@@ -50,7 +50,7 @@ canvas{width:100%;height:120px;display:block}
     <button class="big bad" id="btnBad">🔴 斷了</button>
     <button class="big ok" id="btnGood">🟢 順了</button>
     <button class="acc" id="btnNow">立刻量一輪</button>
-    <button id="btnExport">匯出 CSV</button>
+    <button id="btnExport">匯出 CSV（兩個檔）</button>
     <button id="btnCopy">複製摘要</button>
     <button id="btnClear">清除資料</button>
     <label class="small">間隔
@@ -75,6 +75,12 @@ canvas{width:100%;height:120px;display:block}
     <b>isure／ws（主機名）</b>是喇叭現在實際走的路，它們變黃變紅、或吞吐掉到個位數 MB/s 時，正是該按「斷了」對照的時刻。</p>
   </div>
 
+  <div class="card">
+    <h2>秒級連續探針（每 5 秒；紅塊＝該次逾時或連線 >1500ms＝「停頓」；橘線＝你按的斷／順）</h2>
+    <div id="tickSummary" class="small">尚無資料</div>
+    <canvas id="tickCanvas" style="height:110px"></canvas>
+    <p class="legend">這條線專抓「幾秒鐘」的短暫停頓——每分鐘一輪的表格看不到的東西。它從這台電腦經 2.4G WiFi 出去，量的是喇叭同一片空中鏈路加 WAN。斷音時若這裡同時出現紅塊，問題在家裡網路；若這裡一路乾淨而音樂仍斷，問題在喇叭與 QQ 服務端之間。</p>
+  </div>
   <div class="grid" id="charts"></div>
   <p class="small">資料只存在這台電腦的瀏覽器裡（最多保留 48 小時）。請讓這個分頁保持在前景，Chrome 對背景分頁會拖慢計時。</p>
 </main>
@@ -141,7 +147,7 @@ function runCycle(){
     document.getElementById('cycle').textContent='已量 '+rows.filter(function(x){return x.type==='probe';}).length+' 輪';
   });
 }
-function addEvent(kind){ rows.push({t:Date.now(),type:'event',kind:kind}); save(); render(); }
+function addEvent(kind){ rows.push({t:Date.now(),type:'event',kind:kind}); save(); render(); renderTicks(); }
 function setStatus(s){ document.getElementById('status').textContent=s; }
 
 function cellClass(tg,x){
@@ -223,12 +229,55 @@ function copySummary(){
   var t=document.getElementById('summary').innerText;
   if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){setStatus('摘要已複製');},function(){setStatus('複製失敗，請手動選取');}); }
 }
+var TICK_STORE='homenet_tick_v1', TICK_MAX=24*3600*1000, TICK_EVERY=5000, STALL_MS=1500;
+var ticks=(function(){try{var r=JSON.parse(localStorage.getItem(TICK_STORE)||'[]');var cut=Date.now()-TICK_MAX;return r.filter(function(x){return x[0]>cut;});}catch(e){return [];}})();
+function saveTicks(){try{localStorage.setItem(TICK_STORE,JSON.stringify(ticks));}catch(e){}}
+function tickOnce(){
+  var t=Date.now();
+  Promise.all([probeQuick('https://1.1.1.1/'),probeQuick('https://203.205.137.157/')]).then(function(r){
+    ticks.push([t,r[0],r[1]]); if(ticks.length>20000)ticks.splice(0,ticks.length-20000); saveTicks(); renderTicks();
+  });
+}
+function probeQuick(url){
+  return new Promise(function(res){
+    var ctl=new AbortController(); var t0=performance.now(); var done=false;
+    var to=setTimeout(function(){if(done)return;done=true;ctl.abort();res(-1);},STALL_MS+1500);
+    fetch(url+'?_='+Math.random(),{mode:'no-cors',cache:'no-store',signal:ctl.signal})
+      .then(function(){if(done)return;done=true;clearTimeout(to);res(Math.round(performance.now()-t0));})
+      .catch(function(){if(done)return;done=true;clearTimeout(to);var ms=Math.round(performance.now()-t0);res(ms>=STALL_MS+1400?-1:ms);});
+  });
+}
+function renderTicks(){
+  var cv=document.getElementById('tickCanvas'); if(!cv)return;
+  var W=cv.width=(cv.clientWidth*2)||1200,H=cv.height=220; var g=cv.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,W,H);
+  var win=ticks.filter(function(x){return x[0]>Date.now()-3*3600*1000;}); // 顯示最近 3 小時
+  if(!win.length){document.getElementById('tickSummary').textContent='尚無資料';return;}
+  var t0=win[0][0],t1=Date.now(); function X(t){return (t-t0)/Math.max(1,(t1-t0))*(W-20)+10;}
+  var ev=rows.filter(function(x){return x.type==='event'&&x.t>=t0;});
+  ev.forEach(function(e){g.fillStyle=e.kind==='bad'?'rgba(214,69,69,.35)':'rgba(46,158,91,.35)';g.fillRect(X(e.t)-3,0,6,H);});
+  var mx=1500, stalls=0, worst=0;
+  win.forEach(function(s){
+    var a=s[1],b=s[2]; var bad=(a<0||b<0||a>STALL_MS||b>STALL_MS); if(bad)stalls++;
+    var v=Math.max(a<0?mx:a,b<0?mx:b); worst=Math.max(worst,v);
+    var x=X(s[0]); var h=Math.min(v,mx)/mx*(H-30);
+    g.fillStyle=bad?'#d64545':(v>400?'#d7a100':'#2456a8'); g.fillRect(x-1,H-10-h,3,h);
+  });
+  g.fillStyle='#6b7280'; g.font='18px sans-serif'; g.fillText(ts(t0).slice(11,16),10,H-2-10+10); var lbl=ts(t1).slice(11,16); g.fillText(lbl,W-10-g.measureText(lbl).width,H-2);
+  var lat=win.map(function(s){return Math.max(s[1],s[2]);}).filter(function(v){return v>=0;}).sort(function(a,b){return a-b;});
+  document.getElementById('tickSummary').textContent='最近 3 小時：'+win.length+' 次取樣，停頓 '+stalls+' 次'+(lat.length?'，連線中位 '+lat[Math.floor(lat.length/2)]+'ms、p95 '+lat[Math.floor(lat.length*0.95)]+'ms、最差 '+worst+'ms':'')+'（全部累積 '+ticks.length+' 次）';
+}
+function exportTicks(){
+  var lines=['time,cf_1.1.1.1_ms,isure_203_ms']; ticks.forEach(function(s){lines.push(ts(s[0])+','+s[1]+','+s[2]);});
+  var blob=new Blob(['﻿'+lines.join('
+')],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='homenet_ticks_'+ts(Date.now()).replace(/[: ]/g,'-')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+setInterval(tickOnce,TICK_EVERY); tickOnce();
 function schedule(){ if(timer)clearInterval(timer); var s=parseInt(document.getElementById('interval').value,10); timer=setInterval(runCycle,s*1000); }
 
 document.getElementById('btnBad').onclick=function(){ addEvent('bad'); runCycle(); };
 document.getElementById('btnGood').onclick=function(){ addEvent('good'); runCycle(); };
 document.getElementById('btnNow').onclick=runCycle;
-document.getElementById('btnExport').onclick=exportCSV;
+document.getElementById('btnExport').onclick=function(){exportCSV();setTimeout(exportTicks,600);};
 document.getElementById('btnCopy').onclick=copySummary;
 document.getElementById('btnClear').onclick=function(){ if(confirm('清除本機所有觀測資料？')){ rows=[]; save(); render(); } };
 document.getElementById('interval').onchange=schedule;
