@@ -268,8 +268,7 @@ function renderTicks(){
 }
 function exportTicks(){
   var lines=['time,cf_1.1.1.1_ms,isure_203_ms']; ticks.forEach(function(s){lines.push(ts(s[0])+','+s[1]+','+s[2]);});
-  var blob=new Blob(['﻿'+lines.join('
-')],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='homenet_ticks_'+ts(Date.now()).replace(/[: ]/g,'-')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+  var blob=new Blob(['\ufeff'+lines.join('\n')],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='homenet_ticks_'+ts(Date.now()).replace(/[: ]/g,'-')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
 setInterval(tickOnce,TICK_EVERY); tickOnce();
 function schedule(){ if(timer)clearInterval(timer); var s=parseInt(document.getElementById('interval').value,10); timer=setInterval(runCycle,s*1000); }
