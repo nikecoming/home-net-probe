@@ -112,7 +112,7 @@ function probe(url){
     var ctl=new AbortController(); var t0=performance.now(); var done=false;
     var to=setTimeout(function(){ if(done)return; done=true; ctl.abort(); res({ms:null,state:'timeout'}); },TIMEOUT);
     var u=url+(url.indexOf('?')<0?'?':'&')+'_='+Math.random();
-    fetch(u,{mode:'no-cors',cache:'no-store',signal:ctl.signal,redirect:'manual'})
+    fetch(u,{mode:'no-cors',cache:'no-store',signal:ctl.signal})
       .then(function(){ if(done)return; done=true; clearTimeout(to); res({ms:Math.round(performance.now()-t0),state:'ok'}); })
       .catch(function(){ if(done)return; done=true; clearTimeout(to); var ms=Math.round(performance.now()-t0); res({ms:ms,state:(ms<TIMEOUT-50)?'fail':'timeout'}); });
   });
