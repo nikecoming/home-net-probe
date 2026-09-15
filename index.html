@@ -147,7 +147,7 @@ function setStatus(s){ document.getElementById('status').textContent=s; }
 function cellClass(tg,x){
   if(!x) return 'c-na';
   if(tg.expectDead){ return x.state==='timeout' ? 'c-ok' : 'c-bad'; }
-  if(tg.dnsProbe){ return (x.state==='fail' && x.ms<1500) ? 'c-ok' : (x.state==='timeout' ? 'c-warn' : 'c-bad'); }
+  if(tg.dnsProbe){ return (x.state==='fail' && x.ms<1500) ? 'c-ok' : 'c-bad'; } // 在家：快速失敗＝映射在；逾時或連上＝死節點回到名單
   if(x.state==='timeout') return 'c-bad';
   if(x.ms<150) return 'c-ok';
   if(x.ms<600) return 'c-warn';
