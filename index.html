@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>家用網路觀測台</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1c1e21;--muted:#6b7280;--card:#fff;--line:#e5e7eb;--ok:#2e9e5b;--warn:#d7a100;--bad:#d64545;--acc:#2456a8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 -apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",sans-serif}
+header{padding:14px 20px;background:#fff;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center}
+header h1{font-size:20px;margin:0}
+.pill{padding:2px 10px;border-radius:999px;background:#eef2ff;color:var(--acc);font-size:14px}
+main{padding:16px 20px;max-width:1400px;margin:0 auto}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+button{font:inherit;padding:12px 22px;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer}
+button.big{font-size:22px;font-weight:700;padding:18px 34px}
+button.bad{background:var(--bad);color:#fff;border-color:var(--bad)}
+button.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.acc{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:16px;margin:0 0 8px;color:var(--muted);font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;position:sticky;top:0;background:#fff}
+.c-ok{background:#e7f6ec;color:#14532d}
+.c-warn{background:#fdf3d0;color:#713f12}
+.c-bad{background:#fde2e2;color:#7f1d1d;font-weight:700}
+.c-na{color:var(--muted)}
+.ev{background:#fff3e6;font-weight:700}
+.scroll{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.legend{font-size:13px;color:var(--muted)}
+.legend b{color:var(--fg)}
+canvas{width:100%;height:120px;display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.small{font-size:13px;color:var(--muted)}
+#status{font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>家用網路觀測台</h1>
+  <span class="pill" id="pubip">對外 IP：查詢中…</span>
+  <span class="pill" id="cycle">尚未開始</span>
+  <span id="status" class="small"></span>
+</header>
+<main>
+  <div class="row">
+    <button class="big bad" id="btnBad">🔴 斷了</button>
+    <button class="big ok" id="btnGood">🟢 順了</button>
+    <button class="acc" id="btnNow">立刻量一輪</button>
+    <button id="btnExport">匯出 CSV</button>
+    <button id="btnCopy">複製摘要</button>
+    <button id="btnClear">清除資料</button>
+    <label class="small">間隔
+      <select id="interval">
+        <option value="30">30 秒</option>
+        <option value="60" selected>60 秒</option>
+        <option value="120">120 秒</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="card">
+    <h2>摘要（本機累積）</h2>
+    <div id="summary" class="small">尚無資料</div>
+  </div>
+
+  <div class="card">
+    <h2>時間軸（最新在上）— 數字＝毫秒；<span class="c-bad" style="padding:0 6px">逾時</span>＝5 秒內連不上；<span class="ev" style="padding:0 6px">事件</span>＝你按的斷／順</h2>
+    <div class="scroll"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+    <p class="legend">判讀：IP 欄量的是家裡到該節點的路徑（連得上＝TCP＋TLS 有回應，就算憑證不符也算連得上，數字後的 * 表示如此）。
+    <b>dl.stream（主機名）</b>這格<b>快速失敗才是正常</b>——代表路由器把它攔掉、喇叭不會去碰死節點；若它變成「連得上」，代表映射失效、死節點回到名單。
+    <b>isure／ws（主機名）</b>是喇叭現在實際走的路，它們變黃變紅、或吞吐掉到個位數 MB/s 時，正是該按「斷了」對照的時刻。</p>
+  </div>
+
+  <div class="grid" id="charts"></div>
+  <p class="small">資料只存在這台電腦的瀏覽器裡（最多保留 48 小時）。請讓這個分頁保持在前景，Chrome 對背景分頁會拖慢計時。</p>
+</main>
+<script>
+(function(){
+'use strict';
+var TARGETS=[
+ {key:'isure_203',label:'isure 203.205.137.157（IP）',url:'https://203.205.137.157/'},
+ {key:'ws_43175',label:'ws 43.175.44.41（IP）',url:'https://43.175.44.41/'},
+ {key:'isure_43152',label:'isure 43.152.14.111（IP）',url:'https://43.152.14.111/'},
+ {key:'dl_live',label:'dl 活節點 61.176.202.116',url:'https://61.176.202.116/'},
+ {key:'dl_dead',label:'dl 死節點 116.162.172.55',url:'https://116.162.172.55/',expectDead:true},
+ {key:'mina_47',label:'mina 47.236.127.146',url:'https://47.236.127.146/'},
+ {key:'cf_ip',label:'對照 1.1.1.1',url:'https://1.1.1.1/'},
+ {key:'h_dl',label:'dl.stream（主機名＝DNS探針）',url:'https://dl.stream.qqmusic.qq.com/',dnsProbe:true},
+ {key:'h_isure',label:'isure.stream（主機名）',url:'https://isure.stream.qqmusic.qq.com/'},
+ {key:'h_ws',label:'ws.stream（主機名）',url:'https://ws.stream.qqmusic.qq.com/'},
+ {key:'h_mina',label:'api2.mina.mi.com（主機名）',url:'https://api2.mina.mi.com/'}
+];
+var TIMEOUT=5000, STORE='homenet_probe_v1', MAXAGE=48*3600*1000;
+var rows=load(), timer=null, running=false;
+
+function load(){
+  try{ var r=JSON.parse(localStorage.getItem(STORE)||'[]'); var cut=Date.now()-MAXAGE; return r.filter(function(x){return x.t>cut;}); }
+  catch(e){ return []; }
+}
+function save(){ try{ localStorage.setItem(STORE,JSON.stringify(rows)); }catch(e){} }
+function ts(t){
+  var d=new Date(t); function p(n){return (n<10?'0':'')+n;}
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+
+function probe(url){
+  return new Promise(function(res){
+    var ctl=new AbortController(); var t0=performance.now(); var done=false;
+    var to=setTimeout(function(){ if(done)return; done=true; ctl.abort(); res({ms:null,state:'timeout'}); },TIMEOUT);
+    var u=url+(url.indexOf('?')<0?'?':'&')+'_='+Math.random();
+    fetch(u,{mode:'no-cors',cache:'no-store',signal:ctl.signal,redirect:'manual'})
+      .then(function(){ if(done)return; done=true; clearTimeout(to); res({ms:Math.round(performance.now()-t0),state:'ok'}); })
+      .catch(function(){ if(done)return; done=true; clearTimeout(to); var ms=Math.round(performance.now()-t0); res({ms:ms,state:(ms<TIMEOUT-50)?'fail':'timeout'}); });
+  });
+}
+function throughput(){
+  var bytes=2000000; var t0=performance.now();
+  return fetch('https://speed.cloudflare.com/__down?bytes='+bytes+'&_='+Math.random(),{cache:'no-store'})
+    .then(function(r){ return r.arrayBuffer(); })
+    .then(function(b){ var s=(performance.now()-t0)/1000; return Math.round(b.byteLength/1048576/s*10)/10; })
+    .catch(function(){ return null; });
+}
+function pubip(){
+  fetch('https://api.ipify.org?format=json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+    var tag = j.ip.indexOf('180.176.')===0 ? '（凱擘）' : (j.ip.indexOf('61.227.')===0 ? '（中華／教會）' : '');
+    document.getElementById('pubip').textContent='對外 IP：'+j.ip+tag;
+  }).catch(function(){ document.getElementById('pubip').textContent='對外 IP：查不到'; });
+}
+
+function runCycle(){
+  if(running)return; running=true; setStatus('量測中…');
+  var t=Date.now(); var out={t:t,type:'probe',r:{}};
+  var ps=TARGETS.map(function(tg){ return probe(tg.url).then(function(x){ out.r[tg.key]=x; }); });
+  ps.push(throughput().then(function(v){ out.tp=v; }));
+  Promise.all(ps).then(function(){
+    rows.push(out); save(); render(); running=false; setStatus('上次量測 '+ts(t));
+    document.getElementById('cycle').textContent='已量 '+rows.filter(function(x){return x.type==='probe';}).length+' 輪';
+  });
+}
+function addEvent(kind){ rows.push({t:Date.now(),type:'event',kind:kind}); save(); render(); }
+function setStatus(s){ document.getElementById('status').textContent=s; }
+
+function cellClass(tg,x){
+  if(!x) return 'c-na';
+  if(tg.expectDead){ return x.state==='timeout' ? 'c-ok' : 'c-bad'; }
+  if(tg.dnsProbe){ return (x.state==='fail' && x.ms<1500) ? 'c-ok' : (x.state==='timeout' ? 'c-warn' : 'c-bad'); }
+  if(x.state==='timeout') return 'c-bad';
+  if(x.ms<150) return 'c-ok';
+  if(x.ms<600) return 'c-warn';
+  return 'c-bad';
+}
+function cellText(tg,x){ if(!x) return '—'; if(x.state==='timeout') return '逾時'; return x.ms+(x.state==='fail'?'*':''); }
+
+function render(){
+  var th='<tr><th>時間</th><th>吞吐 MB/s</th>'+TARGETS.map(function(t){ return '<th title="'+t.url+'">'+t.label.replace('（','<br>（')+'</th>'; }).join('')+'</tr>';
+  document.querySelector('#tbl thead').innerHTML=th;
+  var body=''; var list=rows.slice().reverse().slice(0,300);
+  list.forEach(function(r){
+    if(r.type==='event'){
+      body+='<tr class="ev"><td>'+ts(r.t)+'</td><td colspan="'+(TARGETS.length+1)+'">'+(r.kind==='bad'?'🔴 你按了「斷了」':'🟢 你按了「順了」')+'</td></tr>'; return;
+    }
+    body+='<tr><td>'+ts(r.t)+'</td><td class="'+(r.tp==null?'c-bad':(r.tp<2?'c-warn':'c-ok'))+'">'+(r.tp==null?'失敗':r.tp)+'</td>'
+      +TARGETS.map(function(tg){ var x=r.r[tg.key]; return '<td class="'+cellClass(tg,x)+'">'+cellText(tg,x)+'</td>'; }).join('')+'</tr>';
+  });
+  document.querySelector('#tbl tbody').innerHTML=body||'<tr><td colspan="99" class="c-na">尚無資料</td></tr>';
+  renderSummary(); renderCharts();
+}
+function renderSummary(){
+  var pr=rows.filter(function(x){return x.type==='probe';}); var ev=rows.filter(function(x){return x.type==='event';});
+  if(!pr.length){ document.getElementById('summary').textContent='尚無資料'; return; }
+  var lines=['量測 '+pr.length+' 輪，'+ts(pr[0].t)+' → '+ts(pr[pr.length-1].t)+'；事件：斷了 '+ev.filter(function(e){return e.kind==='bad';}).length+' 次、順了 '+ev.filter(function(e){return e.kind==='good';}).length+' 次'];
+  TARGETS.forEach(function(tg){
+    var xs=pr.map(function(p){return p.r[tg.key];}).filter(Boolean);
+    var to=xs.filter(function(x){return x.state==='timeout';}).length;
+    var ms=xs.filter(function(x){return x.ms!=null && x.state!=='timeout';}).map(function(x){return x.ms;}).sort(function(a,b){return a-b;});
+    var med=ms.length?ms[Math.floor(ms.length/2)]:null, p90=ms.length?ms[Math.max(0,Math.ceil(ms.length*0.9)-1)]:null;
+    lines.push(tg.label+'：逾時 '+to+'/'+xs.length+(med!=null?'，中位 '+med+'ms，p90 '+p90+'ms':''));
+  });
+  var tps=pr.map(function(p){return p.tp;}).filter(function(v){return v!=null;}).sort(function(a,b){return a-b;});
+  if(tps.length) lines.push('吞吐：中位 '+tps[Math.floor(tps.length/2)]+' MB/s，最低 '+tps[0]+' MB/s');
+  document.getElementById('summary').innerHTML=lines.map(function(l){return '<div>'+l+'</div>';}).join('');
+}
+function renderCharts(){
+  var host=document.getElementById('charts'); host.innerHTML='';
+  var pr=rows.filter(function(x){return x.type==='probe';}).slice(-240); var ev=rows.filter(function(x){return x.type==='event';});
+  var series=[{label:'吞吐 MB/s（越高越好）',get:function(p){return p.tp;},max:null}]
+    .concat(TARGETS.filter(function(t){return !t.expectDead;}).map(function(tg){
+      return {label:tg.label+' ms',get:function(p){ var x=p.r[tg.key]; return x?(x.state==='timeout'?TIMEOUT:x.ms):null; },max:TIMEOUT};
+    }));
+  series.forEach(function(s){
+    var card=document.createElement('div'); card.className='card'; card.innerHTML='<h2>'+s.label+'</h2><canvas></canvas>'; host.appendChild(card);
+    var cv=card.querySelector('canvas'); var W=cv.width=(cv.clientWidth*2)||800, H=cv.height=240; var g=cv.getContext('2d');
+    var vals=pr.map(s.get); var nz=vals.filter(function(v){return v!=null;}); var mx=s.max||Math.max.apply(null,nz.concat([1]));
+    g.fillStyle='#fff'; g.fillRect(0,0,W,H);
+    if(!pr.length) return;
+    var t0=pr[0].t, t1=pr[pr.length-1].t||t0+1; function X(t){ return (t-t0)/Math.max(1,(t1-t0))*(W-20)+10; }
+    ev.forEach(function(e){ if(e.t<t0||e.t>t1)return; g.fillStyle=e.kind==='bad'?'rgba(214,69,69,.25)':'rgba(46,158,91,.25)'; g.fillRect(X(e.t)-3,0,6,H); });
+    g.strokeStyle='#2456a8'; g.lineWidth=3; g.beginPath(); var started=false;
+    pr.forEach(function(p,i){ var v=vals[i]; if(v==null){started=false;return;} var y=H-8-(Math.min(v,mx)/mx)*(H-16); if(!started){g.moveTo(X(p.t),y);started=true;} else g.lineTo(X(p.t),y); });
+    g.stroke();
+    if(s.max){ g.fillStyle='#d64545'; pr.forEach(function(p,i){ if(vals[i]===TIMEOUT){ g.fillRect(X(p.t)-3,4,6,10); } }); }
+    g.fillStyle='#6b7280'; g.font='20px sans-serif'; g.fillText(ts(t0).slice(5,16),10,H-12);
+    var lbl=ts(t1).slice(5,16); g.fillText(lbl,W-10-g.measureText(lbl).width,H-12);
+  });
+}
+function exportCSV(){
+  var head=['time','type','event','throughput_MBps'].concat(TARGETS.map(function(t){return t.key+'_ms';}),TARGETS.map(function(t){return t.key+'_state';}));
+  var lines=[head.join(',')];
+  rows.forEach(function(r){
+    if(r.type==='event'){ lines.push([ts(r.t),'event',r.kind,''].concat(TARGETS.map(function(){return '';}),TARGETS.map(function(){return '';})).join(',')); return; }
+    lines.push([ts(r.t),'probe','',r.tp==null?'':r.tp].concat(
+      TARGETS.map(function(t){ var x=r.r[t.key]; return (x&&x.ms!=null)?x.ms:''; }),
+      TARGETS.map(function(t){ var x=r.r[t.key]; return x?x.state:''; })).join(','));
+  });
+  var blob=new Blob(['﻿'+lines.join('\n')],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='homenet_probe_'+ts(Date.now()).replace(/[: ]/g,'-')+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+function copySummary(){
+  var t=document.getElementById('summary').innerText;
+  if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){setStatus('摘要已複製');},function(){setStatus('複製失敗，請手動選取');}); }
+}
+function schedule(){ if(timer)clearInterval(timer); var s=parseInt(document.getElementById('interval').value,10); timer=setInterval(runCycle,s*1000); }
+
+document.getElementById('btnBad').onclick=function(){ addEvent('bad'); runCycle(); };
+document.getElementById('btnGood').onclick=function(){ addEvent('good'); runCycle(); };
+document.getElementById('btnNow').onclick=runCycle;
+document.getElementById('btnExport').onclick=exportCSV;
+document.getElementById('btnCopy').onclick=copySummary;
+document.getElementById('btnClear').onclick=function(){ if(confirm('清除本機所有觀測資料？')){ rows=[]; save(); render(); } };
+document.getElementById('interval').onchange=schedule;
+document.addEventListener('visibilitychange',function(){ if(document.hidden) setStatus('⚠ 分頁在背景，計時可能被拖慢'); });
+pubip(); render(); runCycle(); schedule();
+})();
+</script>
+</body>
+</html>
