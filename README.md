@@ -12,7 +12,14 @@ https://nikecoming.github.io/home-net-probe/ — 家裡任何電腑的 Chrome �
 2. 「編輯設定」：主機名 `xiaoai-pi`；使用者 `pi` ＋ 自訂密碾；**服務 → 啟用 SSH（密碼登入）**；WiFi 可不設（用有線）。
 3. 燒好插卡、接網線到**路由器本體的有線埠**（鏡像只能鏡到路由器自己的埠；插交換器抓不到）、上電。
 
-### 安裝與啟動（在 Pi 上，或 SSH 進去）
+### 2026-09-16 這張卡已由 Claude 預先設好（cloud-init，全自動）
+- 帳號 `nikecoming`（Imager 設的密碼）、主機名 `WangHomePI`、SSH 已開、時區台北。
+- **首次開機接上有線網路後**：自動安裝 tcpdump/tshark → 啟動 `xiaoai-capture.service`（抓三台小愛，`/opt/xiaoai/pcap/`，10 分鐘切檔）與 `xiaoai-intlwatch.service`（家裡端境外監測 `/opt/xiaoai/_intl_watch_home.csv`）。`~/xiaoai` 是 `/opt/xiaoai` 的連結。
+- 首次開機會裝套件，請給它 5–10 分鐘；完成的記號：`cat ~/xiaoai/READY.txt`。
+- 看摘要：`~/xiaoai/pi_summary.sh`（會用 sudo 讀 root 抓的 pcap）。
+- 若 cloud-init 沒跑成，才用下面的手動安裝。
+
+### 手動安裝與啟動（備援）
 ```bash
 curl -fsSL https://nikecoming.github.io/home-net-probe/pi_setup.sh | bash
 cd ~/xiaoai && ./pi_capture.sh          # 背景抓三台小愛（192.168.2.5/.6/.20），10 分鐘切檔
