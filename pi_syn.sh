@@ -46,11 +46,12 @@ sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags
   -T fields -e ip.dst -e tcp.dstport 2>/dev/null | sort | uniq -c | sort -rn | head -12 | sed 's/^/   /'
 echo
 echo "== D. 建連 RTT 分布（tcp.analysis.initial_rtt，秒）=="
-sudo tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>/dev/null \
- | awk '{n++; v[n]=$1; s+=$1; if($1>1)slow++; if($1>3)vslow++}
-   END{if(!n){print "   （無）";exit} asort(v);
-     printf "   %d 條  中位數 %.3f  平均 %.3f  最大 %.3f\n",n,v[int(n/2)+1],s/n,v[n];
-     printf "   >1 秒 %d 條 (%.1f%%)   >3 秒 %d 條 (%.1f%%)  <= 這些就是使用者等的時間\n",slow,100*slow/n,vslow,100*vslow/n}'
+sudo tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>/dev/null  | sort -n | awk '{n++; v[n]=$1+0; s+=v[n]; if(v[n]>1)slow++; if(v[n]>3)vslow++}
+   END{if(!n){print "   （無資料）";exit}
+     printf "   %d 條  中位數 %.3f  平均 %.3f  最大 %.3f
+",n,v[int(n/2)+1],s/n,v[n];
+     printf "   >1 秒 %d 條 (%.1f%%)   >3 秒 %d 條 (%.1f%%)  <= 這些就是使用者等的時間
+",slow,100*slow/n,vslow,100*vslow/n}'
 echo
 echo "== E. 隧道 vs 直連（filter 已修）=="
 CT=$(q "tcp&&$F&&$ME"); CR=$(q "tcp.analysis.retransmission&&$F&&$ME")
