@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# 用「真正的那個音訊 URL」去實測每個候選 CDN 節點的下載速度。
+# DNS 對 isure6-qqmusic.a.bdydns.com 回了 6 個 IP，喇叭挑了最爛的那個。這支量出哪個最快。
+set -u
+D=/opt/xiaoai/pcap
+M=/tmp/cdn.pcap
+FILES=$(ls -t "$D"/*.pcap 2>/dev/null | head -3)
+[ -z "$FILES" ] && { echo "找不到 pcap"; exit 1; }
+sudo mergecap -w "$M" $FILES 2>/dev/null || { echo mergecap 失敗; exit 1; }
+
+# 從 pcap 撈最後一個對 111.20.254.35 的 HTTP GET（真實 URL，含 vkey）
+read HOST URI <<<"$(sudo tshark -r "$M" -Y 'http.request && ip.dst==111.20.254.35' \
+   -T fields -e http.host -e http.request.uri 2>/dev/null | tail -1)"
+rm -f "$M"
+if [ -z "${URI:-}" ]; then
+  echo "pcap 裡撈不到對 111.20.254.35 的 HTTP GET（可能剛好沒在播）。請在播放中再跑一次。"; exit 1
+fi
+echo "Host: $HOST"
+echo "URI : ${URI:0:110}..."
+echo
+
+# DNS 對該域名回過的候選（含目前在用的那個當對照組）
+CAND="111.20.254.35 180.76.76.118 182.61.200.72 180.101.49.224 111.45.3.163 110.242.68.26 180.76.5.78 180.76.5.228 103.235.46.223"
+
+OUT=$(
+echo "== CDN 候選節點實測（同一個真實音訊 URL，各抓 3 MB，上限 20 秒）=="
+echo "   $(date '+%F %T')   Host: $HOST"
+echo
+printf "   %-18s %10s %8s %9s  %s\n" 節點IP 下載KB/s HTTP 取得KB 備註
+printf "   %s\n" "---------------------------------------------------------------"
+for ip in $CAND; do
+  r=$(curl -s -o /dev/null --max-time 20 -r 0-3000000 \
+        -H "Host: $HOST" -H "User-Agent: Mozilla/5.0" \
+        -w '%{speed_download} %{http_code} %{size_download}' \
+        "http://$ip$URI" 2>/dev/null)
+  sp=$(echo "$r" | awk '{print $1+0}'); code=$(echo "$r" | awk '{print $2}'); sz=$(echo "$r" | awk '{print $3+0}')
+  note=""
+  [ "$ip" = "111.20.254.35" ] && note="<= 目前在用"
+  [ -z "$code" ] && code="逾時/失敗"
+  awk -v ip="$ip" -v sp="$sp" -v c="$code" -v sz="$sz" -v n="$note" 'BEGIN{
+    bar=""; k=sp/1024; m=int(k/40); for(i=0;i<m&&i<20;i++)bar=bar"#";
+    printf "   %-18s %10.1f %8s %9.0f  %s %s\n", ip, k, c, sz/1024, n, bar}'
+done
+echo
+echo "   讀法：HTTP 200/206 且速度高 = 可用且快。404/403 = 該節點不認這個 URL（不能換）。"
+echo "   目標：找到比 111.20.254.35 明顯快、且回 200/206 的節點。"
+)
+echo "$OUT"
+echo; echo "---- 上傳中 ----"
+echo "$OUT" | curl -s --data-binary @- https://paste.rs/
+echo
