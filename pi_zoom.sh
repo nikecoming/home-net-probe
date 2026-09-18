@@ -6,13 +6,16 @@
 # --- 儀器守衛：tshark 壞過濾器會靜默回 0，這裡讓它大聲失敗（2026-09-19 三審修）---
 TSERR="$(mktemp -t tserr.XXXXXX)"
 _ts_report() {
-  if [ -s "$TSERR" ]; then
+  # sudo tshark 每次都會印「Running as user root ...」，那不是錯誤；
+  # 把它算進來的話每一份報告都會掛上假警報，警報就沒人看了（2026-09-19 負控實測）。
+  grep -v -e 'Running as user' -e 'This could be dangerous' -e '^$' "$TSERR" > "$TSERR.real" 2>/dev/null
+  if [ -s "$TSERR.real" ]; then
     echo
     echo "!!!!!!!! TSHARK 回報錯誤 —— 以上所有數字不可信 !!!!!!!!"
-    sort -u "$TSERR" | head -5 | sed 's/^/  /'
+    sort -u "$TSERR.real" | head -5 | sed 's/^/  /'
     echo "!!!!!!!! （過濾器語法錯或欄位名不存在時會靜默回 0，不是「沒有資料」）"
   fi
-  rm -f "$TSERR"
+  rm -f "$TSERR" "$TSERR.real"
 }
 trap _ts_report EXIT
 set -u
