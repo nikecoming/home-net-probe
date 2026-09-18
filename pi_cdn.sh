@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
 # 用「真正的那個音訊 URL」去實測每個候選 CDN 節點的下載速度。
 # DNS 對 isure6-qqmusic.a.bdydns.com 回了 6 個 IP，喇叭挑了最爛的那個。這支量出哪個最快。
+# --- 儀器守衛：tshark 壞過濾器會靜默回 0，這裡讓它大聲失敗（2026-09-19 三審修）---
+TSERR="$(mktemp -t tserr.XXXXXX)"
+_ts_report() {
+  if [ -s "$TSERR" ]; then
+    echo
+    echo "!!!!!!!! TSHARK 回報錯誤 —— 以上所有數字不可信 !!!!!!!!"
+    sort -u "$TSERR" | head -5 | sed 's/^/  /'
+    echo "!!!!!!!! （過濾器語法錯或欄位名不存在時會靜默回 0，不是「沒有資料」）"
+  fi
+  rm -f "$TSERR"
+}
+trap _ts_report EXIT
 set -u
 D=/opt/xiaoai/pcap
 M=/tmp/cdn.pcap
 FILES=$(ls -t "$D"/*.pcap 2>/dev/null | head -3)
 [ -z "$FILES" ] && { echo "找不到 pcap"; exit 1; }
-sudo mergecap -w "$M" $FILES 2>/dev/null || { echo mergecap 失敗; exit 1; }
+sudo mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
 
 # 從 pcap 撈最後一個對 111.20.254.35 的 HTTP GET（真實 URL，含 vkey）
 read HOST URI <<<"$(sudo tshark -r "$M" -Y 'http.request && ip.dst==111.20.254.35' \
-   -T fields -e http.host -e http.request.uri 2>/dev/null | tail -1)"
+   -T fields -e http.host -e http.request.uri 2>>"$TSERR" | tail -1)"
 rm -f "$M"
 if [ -z "${URI:-}" ]; then
   echo "pcap 裡撈不到對 111.20.254.35 的 HTTP GET（可能剛好沒在播）。請在播放中再跑一次。"; exit 1
@@ -47,5 +59,14 @@ echo "   目標：找到比 111.20.254.35 明顯快、且回 200/206 的節點�
 )
 echo "$OUT"
 echo; echo "---- 上傳中 ----"
-echo "$OUT" | curl -s --data-binary @- https://paste.rs/
+# --- 出貨：先落地再上傳；上傳失敗就把報告整份印出來，不讓資料消失（2026-09-19 三審修）---
+RPT_DIR=/opt/xiaoai/reports; mkdir -p "$RPT_DIR" 2>/dev/null || RPT_DIR=/tmp
+RPT="$RPT_DIR/pi_cdn_$(date '+%Y%m%d_%H%M%S').txt"
+printf '%s\n' "$OUT" > "$RPT" && echo "（本機留底：$RPT）"
+URL="$(printf '%s\n' "$OUT" | curl -s --max-time 60 --data-binary @- https://paste.rs/)"
+case "$URL" in
+  http*) echo "$URL" ;;
+  *) echo "!!!!!!!! paste.rs 上傳失敗（回應：${URL:-空}）—— 以下為報告全文 !!!!!!!!"
+     printf '%s\n' "$OUT" ;;
+esac
 echo

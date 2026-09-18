@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 # 追問：566 個重傳平均只有 222B，那重傳的是「哪一種」封包？
 # 若大量是 SYN 重傳 → 連線建立失敗重試，指數退避 1s/2s/4s/8s 正好長成「按播放等 20 秒」。
+# --- 儀器守衛：tshark 壞過濾器會靜默回 0，這裡讓它大聲失敗（2026-09-19 三審修）---
+TSERR="$(mktemp -t tserr.XXXXXX)"
+_ts_report() {
+  if [ -s "$TSERR" ]; then
+    echo
+    echo "!!!!!!!! TSHARK 回報錯誤 —— 以上所有數字不可信 !!!!!!!!"
+    sort -u "$TSERR" | head -5 | sed 's/^/  /'
+    echo "!!!!!!!! （過濾器語法錯或欄位名不存在時會靜默回 0，不是「沒有資料」）"
+  fi
+  rm -f "$TSERR"
+}
+trap _ts_report EXIT
 set -u
 D=/opt/xiaoai/pcap
 M=/tmp/syn_merged.pcap
 FILES=$(ls -t "$D"/*.pcap 2>/dev/null | head -6)
 [ -z "$FILES" ] && { echo "找不到 pcap（$D）"; exit 1; }
-sudo mergecap -w "$M" $FILES 2>/dev/null || { echo mergecap 失敗; exit 1; }
+sudo mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
 SP='ip.src==192.168.2.5||ip.src==192.168.2.6||ip.src==192.168.2.20'
 DP='ip.dst==192.168.2.5||ip.dst==192.168.2.6||ip.dst==192.168.2.20'
 ME="($SP||$DP)"
@@ -15,7 +27,7 @@ ME="($SP||$DP)"
 CH="8.128.0.0/10 8.208.0.0/12 39.96.0.0/11 47.0.0.0/8 101.128.0.0/11 106.0.0.0/10 162.128.37.0/24 119.29.29.0/24 203.107.0.0/16 210.72.0.0/16 120.197.0.0/16"
 F=""; for n in $CH; do F="$F||ip.addr==$n"; done; F="(${F#||})"
 
-q(){ sudo tshark -r "$M" -Y "$1" 2>/dev/null | wc -l; }
+q(){ sudo tshark -r "$M" -Y "$1" 2>>"$TSERR" | wc -l; }
 
 OUT=$(
 echo "== 產生 $(date '+%F %T') / $(echo $FILES | wc -w) 檔 =="
@@ -37,16 +49,16 @@ awk -v r="$R" -v s="$RS" -v a="$RA" -v d="$RD" -v k="$RK" -v f="$RF" 'BEGIN{
  printf "   FIN             %5d  %5.1f%%\n",f,f*p;}'
 echo
 echo "== B. 有多少條連線「建立時就要重試 SYN」=="
-TOT=$(sudo tshark -r "$M" -Y "tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>/dev/null|sort -u|wc -l)
-BAD=$(sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>/dev/null|sort -u|wc -l)
+TOT=$(sudo tshark -r "$M" -Y "tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
+BAD=$(sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
 awk -v t="$TOT" -v b="$BAD" 'BEGIN{printf "   嘗試建立 %d 條，其中 %d 條要重送 SYN（%.1f%%）\n",t,b,(t?100*b/t:0)}'
 echo
 echo "== C. SYN 重傳最多的目的地（誰連不上）=="
 sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" \
-  -T fields -e ip.dst -e tcp.dstport 2>/dev/null | sort | uniq -c | sort -rn | head -12 | sed 's/^/   /'
+  -T fields -e ip.dst -e tcp.dstport 2>>"$TSERR" | sort | uniq -c | sort -rn | head -12 | sed 's/^/   /'
 echo
 echo "== D. 建連 RTT 分布（tcp.analysis.initial_rtt，秒）=="
-sudo tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>/dev/null  | sort -n | awk '{n++; v[n]=$1+0; s+=v[n]; if(v[n]>1)slow++; if(v[n]>3)vslow++}
+sudo tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>>"$TSERR"  | sort -n | awk '{n++; v[n]=$1+0; s+=v[n]; if(v[n]>1)slow++; if(v[n]>3)vslow++}
    END{if(!n){print "   （無資料）";exit}
      printf "   %d 條  中位數 %.3f  平均 %.3f  最大 %.3f
 ",n,v[int(n/2)+1],s/n,v[n];
@@ -62,5 +74,14 @@ awk -v ct="$CT" -v cr="$CR" -v kt="$KT" -v kr="$KR" 'BEGIN{
 )
 echo "$OUT"
 echo; echo "---- 上傳中 ----"
-echo "$OUT" | curl -s --data-binary @- https://paste.rs/
+# --- 出貨：先落地再上傳；上傳失敗就把報告整份印出來，不讓資料消失（2026-09-19 三審修）---
+RPT_DIR=/opt/xiaoai/reports; mkdir -p "$RPT_DIR" 2>/dev/null || RPT_DIR=/tmp
+RPT="$RPT_DIR/pi_syn_$(date '+%Y%m%d_%H%M%S').txt"
+printf '%s\n' "$OUT" > "$RPT" && echo "（本機留底：$RPT）"
+URL="$(printf '%s\n' "$OUT" | curl -s --max-time 60 --data-binary @- https://paste.rs/)"
+case "$URL" in
+  http*) echo "$URL" ;;
+  *) echo "!!!!!!!! paste.rs 上傳失敗（回應：${URL:-空}）—— 以下為報告全文 !!!!!!!!"
+     printf '%s\n' "$OUT" ;;
+esac
 echo
