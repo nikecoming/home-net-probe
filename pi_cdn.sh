@@ -21,10 +21,10 @@ D=/opt/xiaoai/pcap
 M=/tmp/cdn.pcap
 FILES=$(ls -t "$D"/*.pcap 2>/dev/null | head -3)
 [ -z "$FILES" ] && { echo "找不到 pcap"; exit 1; }
-sudo mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
+mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
 
 # 從 pcap 撈最後一個對 111.20.254.35 的 HTTP GET（真實 URL，含 vkey）
-read HOST URI <<<"$(sudo tshark -r "$M" -Y 'http.request && ip.dst==111.20.254.35' \
+read HOST URI <<<"$(tshark -r "$M" -Y 'http.request && ip.dst==111.20.254.35' \
    -T fields -e http.host -e http.request.uri 2>>"$TSERR" | tail -1)"
 rm -f "$M"
 if [ -z "${URI:-}" ]; then

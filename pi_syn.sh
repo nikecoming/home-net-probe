@@ -21,7 +21,7 @@ D=/opt/xiaoai/pcap
 M=/tmp/syn_merged.pcap
 FILES=$(ls -t "$D"/*.pcap 2>/dev/null | head -6)
 [ -z "$FILES" ] && { echo "找不到 pcap（$D）"; exit 1; }
-sudo mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
+mergecap -w "$M" $FILES 2>>"$TSERR" || { echo mergecap 失敗; exit 1; }
 SP='ip.src==192.168.2.5||ip.src==192.168.2.6||ip.src==192.168.2.20'
 DP='ip.dst==192.168.2.5||ip.dst==192.168.2.6||ip.dst==192.168.2.20'
 ME="($SP||$DP)"
@@ -30,7 +30,7 @@ ME="($SP||$DP)"
 CH="8.128.0.0/10 8.208.0.0/12 39.96.0.0/11 47.0.0.0/8 101.128.0.0/11 106.0.0.0/10 162.128.37.0/24 119.29.29.0/24 203.107.0.0/16 210.72.0.0/16 120.197.0.0/16"
 F=""; for n in $CH; do F="$F||ip.addr==$n"; done; F="(${F#||})"
 
-q(){ sudo tshark -r "$M" -Y "$1" 2>>"$TSERR" | wc -l; }
+q(){ tshark -r "$M" -Y "$1" 2>>"$TSERR" | wc -l; }
 
 OUT=$(
 echo "== 產生 $(date '+%F %T') / $(echo $FILES | wc -w) 檔 =="
@@ -52,16 +52,16 @@ awk -v r="$R" -v s="$RS" -v a="$RA" -v d="$RD" -v k="$RK" -v f="$RF" 'BEGIN{
  printf "   FIN             %5d  %5.1f%%\n",f,f*p;}'
 echo
 echo "== B. 有多少條連線「建立時就要重試 SYN」=="
-TOT=$(sudo tshark -r "$M" -Y "tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
-BAD=$(sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
+TOT=$(tshark -r "$M" -Y "tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
+BAD=$(tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" -T fields -e tcp.stream 2>>"$TSERR"|sort -u|wc -l)
 awk -v t="$TOT" -v b="$BAD" 'BEGIN{printf "   嘗試建立 %d 條，其中 %d 條要重送 SYN（%.1f%%）\n",t,b,(t?100*b/t:0)}'
 echo
 echo "== C. SYN 重傳最多的目的地（誰連不上）=="
-sudo tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" \
+tshark -r "$M" -Y "tcp.analysis.retransmission&&tcp.flags.syn==1&&tcp.flags.ack==0&&$ME" \
   -T fields -e ip.dst -e tcp.dstport 2>>"$TSERR" | sort | uniq -c | sort -rn | head -12 | sed 's/^/   /'
 echo
 echo "== D. 建連 RTT 分布（tcp.analysis.initial_rtt，秒）=="
-sudo tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>>"$TSERR"  | sort -n | awk '{n++; v[n]=$1+0; s+=v[n]; if(v[n]>1)slow++; if(v[n]>3)vslow++}
+tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.initial_rtt 2>>"$TSERR"  | sort -n | awk '{n++; v[n]=$1+0; s+=v[n]; if(v[n]>1)slow++; if(v[n]>3)vslow++}
    END{if(!n){print "   （無資料）";exit}
      printf "   %d 條  中位數 %.3f  平均 %.3f  最大 %.3f
 ",n,v[int(n/2)+1],s/n,v[n];
