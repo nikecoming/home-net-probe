@@ -69,6 +69,9 @@ tshark -r "$M" -Y "tcp.analysis.initial_rtt&&$ME" -T fields -e tcp.analysis.init
 ",slow,100*slow/n,vslow,100*vslow/n}'
 echo
 echo "== E. 隧道 vs 直連（filter 已修）=="
+echo "   🛑 這裡的「隧道／直連」是照路由器設定表的網段推定的，不是量到的實際出口。"
+echo "      LAN 側鏡像看不到封包從哪個 WAN 出去；而策略路由（policy_rule）優先於靜態路由，"
+echo "      設定表也可能被靜默忽略。→ 只能當同一份 pcap 內的相對比較，絕對值不要寫進結論。"
 CT=$(q "tcp&&$F&&$ME"); CR=$(q "tcp.analysis.retransmission&&$F&&$ME")
 KT=$(q "tcp&&!$F&&$ME"); KR=$(q "tcp.analysis.retransmission&&!$F&&$ME")
 awk -v ct="$CT" -v cr="$CR" -v kt="$KT" -v kr="$KR" 'BEGIN{

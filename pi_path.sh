@@ -49,6 +49,9 @@ tshark -r "$M" -Y "tcp && ($SP || $DP)" -T fields -e frame.len 2>>"$TSERR" \
                    n,100*big/n,100*mid/n,100*sml/n}'
 echo
 echo "== C. 走教會隧道 vs 走凱擘直連（各自的重傳率）=="
+echo "   🛑 這裡的「隧道／直連」是照路由器設定表的網段推定的，不是量到的實際出口。"
+echo "      LAN 側鏡像看不到封包從哪個 WAN 出去；而策略路由（policy_rule）優先於靜態路由，"
+echo "      設定表也可能被靜默忽略。→ 只能當同一份 pcap 內的相對比較，絕對值不要寫進結論。"
 CT=$(tshark -r "$M" -Y "tcp && ($FILT) && ($SP || $DP)" 2>>"$TSERR" | wc -l)
 CR=$(tshark -r "$M" -Y "tcp.analysis.retransmission && ($FILT) && ($SP || $DP)" 2>>"$TSERR" | wc -l)
 KT=$(tshark -r "$M" -Y "tcp && !($FILT) && ($SP || $DP)" 2>>"$TSERR" | wc -l)
