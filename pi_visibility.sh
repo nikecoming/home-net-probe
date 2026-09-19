@@ -48,10 +48,17 @@ echo
 echo "== D. 這台 Pi 自己知道的鄰居（ARP，含只在廣播裡出現過的）=="
 ip neigh show | sed 's/^/   /'
 echo
-echo "== E. 交叉比對：ARP 裡有、但抓包看不到單播的 =="
-for ip in $(ip neigh show | awk '{print $1}' | grep '^192\.168\.'); do
-  c=$(tshark -r "$TMP/vis.pcap" -Y "ip.addr==$ip && !(eth.dst[0] & 1)" 2>/dev/null | wc -l)
-  [ "$c" -eq 0 ] && printf '   %-16s 單播 0 個 → 盲區（或這 %ss 剛好沒講話）\n' "$ip" "$SEC"
+echo "== E. 交叉比對：ARP 裡有、但抓包看不到「與別人」單播的 =="
+# 🛑 以本機為對端的單播不算數：這台 Pi 是通訊端點，那些封包本來就進得了它的網卡，
+#    完全不需要埠鏡像。要證明「鏡像看得到 X」，只能看 X 跟「Pi 以外的人」的單播。
+#    2026-09-19 實測：NVR 7.6 小時共 13360 個單播，對端全部是 Pi 自己（我打過去的 ping），
+#    跟別人是 0 個——舊寫法會把這個讀成「看得到」。
+ME=$(ip -4 addr show "$IFACE" | awk '/inet /{sub("/.*","",$2); print $2; exit}')
+echo "   （本機 $ME 已從對端排除）"
+for ip in $(ip neigh show | awk '{print $1}' | grep '^192\.168\.' | sort -u); do
+  [ "$ip" = "$ME" ] && continue
+  c=$(tshark -r "$TMP/vis.pcap" -Y "ip.addr==$ip && !(eth.dst[0] & 1) && !(ip.addr==$ME)" 2>/dev/null | wc -l)
+  [ "$c" -eq 0 ] && printf '   %-16s 與別人的單播 0 個 → 盲區（或這 %ss 剛好沒講話）\n' "$ip" "$SEC"
 done
 echo
 echo "== F. 目前 tcpdump 常駐抓包的過濾器（它自己也是一層盲區）=="
